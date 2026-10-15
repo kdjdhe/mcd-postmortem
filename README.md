@@ -8,7 +8,18 @@
 
 ## 安装与第一次体验
 
-需要 **Python 3.10 或以上**。在项目目录执行：
+**方式一：下载 exe（Windows，免安装）**
+
+从 [GitHub Releases](https://github.com/kdjdhe/mcd-postmortem/releases/latest) 下载 `mcd-postmortem.exe`，放到任意目录直接运行：
+
+```powershell
+.\mcd-postmortem.exe demo
+.\mcd-postmortem.exe demo --card demo.png
+```
+
+exe 内置 Python 运行时与全部依赖，无需安装 Python。首次运行如遇 Windows SmartScreen 提示，点"更多信息 → 仍要运行"（未签名的个人开源程序常见提示）。也可用 PowerShell 解除锁定：`Unblock-File .\mcd-postmortem.exe`。
+
+**方式二：pip 安装（需要 Python 3.10+）**
 
 ```bash
 python -m pip install .
@@ -116,6 +127,8 @@ mcd-postmortem audit --combo-quantities per-order
 python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
+
+Windows 免安装 exe 用 PyInstaller 打包：`build_exe.bat`（或见脚本内的 PyInstaller 命令）。注意必须带 `--collect-submodules mcd_postmortem`——规则引擎用 `pkgutil.iter_modules` 动态发现规则模块，静态分析收不齐，漏了会静默少报事件。
 
 回归测试覆盖连续段/非连续反例、订单去重、套餐数量口径、父子项去重、缺失与零值、状态过滤、跨进程复现、JSON 输出、缓存、客户端只读限制与 PNG 生成。测试只使用合成数据与模拟客户端。
 

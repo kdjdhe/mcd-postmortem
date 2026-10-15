@@ -11,7 +11,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+dist-exe/
+.build-venv/
 .venv/
+
+# PyInstaller 打包产物
+*.spec
 
 # 调试产物
 *_test.json
