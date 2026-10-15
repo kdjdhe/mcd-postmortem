@@ -82,6 +82,11 @@ def _run_audit(orders, table, args):
 
     print(render_report(orders, incidents, summary))
 
+    if getattr(args, "card", None):
+        from mcd_postmortem.card import render_card
+        path = render_card(orders, incidents, summary, args.card)
+        print(f"\n🖼  报告卡片已生成: {path}")
+
 
 def _filter_since(orders, since: str):
     m = {"d": "days", "w": "weeks", "m": None}
@@ -111,12 +116,14 @@ def main(argv=None):
     a.add_argument("--sev", choices=["SEV1", "SEV2", "SEV3", "SEV4", "SEV5", "INFO"],
                    help="只看某一级事故")
     a.add_argument("--json", action="store_true", help="输出结构化 JSON")
+    a.add_argument("--card", metavar="PATH", help="生成 PNG 报告卡片到指定路径")
     a.set_defaults(func=cmd_audit)
 
     d = sub.add_parser("demo", help="合成数据演示（无需 Token）")
     d.add_argument("--since")
     d.add_argument("--sev")
     d.add_argument("--json", action="store_true")
+    d.add_argument("--card", metavar="PATH", help="生成 PNG 报告卡片到指定路径")
     d.set_defaults(func=cmd_demo)
 
     args = p.parse_args(argv)
