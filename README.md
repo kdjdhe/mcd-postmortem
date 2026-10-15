@@ -27,6 +27,8 @@ pip install -e .
 export MCD_MCP_TOKEN="你的Token"   # https://open.mcd.cn/mcp 控制台申请
 ```
 
+MCP 连接配置示例见 [`mcp-config.example.json`](mcp-config.example.json)（使用环境变量占位符，请勿在仓库中提交真实 Token）。在 WorkBuddy 中对话式使用本项目的完整指引见 [`workbuddy.md`](workbuddy.md)。
+
 ## 快速开始
 
 ```bash
