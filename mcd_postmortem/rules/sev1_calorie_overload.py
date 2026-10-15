@@ -18,12 +18,14 @@ class CalorieOverloadRule(Rule):
                     title=f"单笔热量过载（{kcal:.0f} kcal ≥ 阈值 {KCAL_LIMIT} kcal）",
                     detail=(
                         f"{o.create_time.strftime('%m-%d %H:%M')} 的变更 "
-                        f"（{_names(o)}）经官方营养表核定负载 {kcal:.0f} kcal，"
-                        f"超出单次变更安全阈值 {KCAL_LIMIT} kcal。"
-                        f"配置管理数据库（你的体重秤）已记录本次偏差。"
+                        f"（{_names(o)}）按本次营养表计算的已知餐品负载为 {kcal:.0f} kcal，"
+                        f"达到本项目趣味规则阈值 {KCAL_LIMIT} kcal。"
+                        f"这是订单餐品合计，不代表个人实际摄入；缺失项未计入。"
                     ),
                     order_ids=[o.order_id],
-                    evidence={"orderId": o.order_id, "kcal": kcal, "threshold": KCAL_LIMIT},
+                    evidence={"orderId": o.order_id, "kcal": kcal, "threshold": KCAL_LIMIT,
+                              "createTime": o.create_time.isoformat(),
+                              "coverage": ctx.coverage(o, "kcal")},
                 ))
         return out
 

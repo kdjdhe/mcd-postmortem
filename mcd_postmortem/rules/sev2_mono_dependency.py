@@ -1,9 +1,4 @@
-"""SEV2 · 单点依赖：同一餐品连续 ≥ 3 单重复出现.
-
-「服务一旦下架将导致早午餐不可用」。
-"""
-from collections import Counter
-
+"""同一餐品连续至少三笔订单；中断后重新计数，每段只报一次。"""
 from mcd_postmortem.rules.base import Incident, Rule
 
 MIN_STREAK = 3
@@ -14,30 +9,31 @@ class MonoDependencyRule(Rule):
     rule_id = "SEV2-MONO-DEPENDENCY"
 
     def check(self, orders, ctx):
-        if len(orders) < MIN_STREAK:
-            return []
-        counter = Counter()
-        last_seen = {}
-        for o in orders:  # orders 已按时间升序
-            for i in o.items:
-                key = i["code"] or i["name"]
-                counter[key] += 1
-                last_seen[key] = (o, i)
-        out = []
-        for key, n in counter.items():
-            if n < MIN_STREAK:
-                continue
-            o, item = last_seen[key]
+        active, out = {}, []
+
+        def finish(key, state):
+            rows, name = state
+            if len(rows) < MIN_STREAK:
+                return
             out.append(Incident(
                 sev=self.sev, rule_id=self.rule_id,
-                title=f"单点依赖：{item['name']} 已出现 {n} 次（阈值 {MIN_STREAK}）",
-                detail=(
-                    f"关键服务 {item['name']} 在观察期 {len(orders)} 次变更中出现 {n} 次，"
-                    f"构成单点依赖。该服务一旦下架，早/午餐可用性将受到直接影响。"
-                    f"建议引入冗余备份（另选 1–2 个替代单品并完成灰度验证）。"
-                ),
-                order_ids=[o.order_id],
-                evidence={"itemName": item["name"], "productCode": item["code"],
-                          "occurrences": n, "windowOrders": len(orders)},
+                title=f"单点依赖：{name} 连续 {len(rows)} 单出现",
+                detail=(f"关键服务 {name} 连续 {len(rows)} 次变更均被选中，达到趣味规则阈值 "
+                        f"{MIN_STREAK}。建议为菜单引入冗余备份，试试别的单品。"),
+                order_ids=[o.order_id for o in rows],
+                evidence={"itemName": name, "productCode": key,
+                          "occurrences": len(rows), "threshold": MIN_STREAK,
+                          "startTime": rows[0].create_time.isoformat(),
+                          "endTime": rows[-1].create_time.isoformat(),
+                          "windowOrders": len(orders)},
             ))
+
+        for order in orders:
+            current = {i["code"] or i["name"]: i["name"] for i in order.items}
+            for key in sorted(set(active) - set(current)):
+                finish(key, active.pop(key))
+            for key, name in sorted(current.items()):
+                active.setdefault(key, ([], name))[0].append(order)
+        for key, state in sorted(active.items()):
+            finish(key, state)
         return out

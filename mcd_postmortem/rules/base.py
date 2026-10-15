@@ -1,6 +1,6 @@
 """事故规则基类.
 
-每条规则一个模块，暴露 INCIDENT 实例（check 函数 + 元数据）。
+每条规则一个模块，定义 Rule 子类（check 方法 + 元数据）。
 社区 PR 新规则 = 往 rules/ 加一个文件，engine 自动发现。
 """
 from dataclasses import dataclass, field
@@ -23,7 +23,7 @@ SEV_TITLES = {
     "SEV3": "资损事故",
     "SEV4": "隐患告警",
     "SEV5": "流程瑕疵",
-    "INFO": "优秀实践",
+    "INFO": "数据提示",
 }
 
 

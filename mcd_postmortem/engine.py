@@ -1,116 +1,114 @@
-"""审计引擎：加载规则 → 计算每单证据（热量/钠）→ 产出事故列表.
-
-确定性保证：同一份订单数据跑两遍，结果一字不差。
-"""
+"""确定性规则判定与营养覆盖率；只汇总可确认的订单餐品数据。"""
+import hashlib
 import importlib
+import json
 import pkgutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
-from mcd_postmortem.orders import match_nutrition
-from mcd_postmortem.rules.base import SEV_ORDER
+from mcd_postmortem.orders import components, match_nutrition, normalize_orders
+from mcd_postmortem.rules.base import Incident, Rule, SEV_ORDER
+
+RULESET_VERSION = "2026.10.15.2"
 
 
 @dataclass
 class AuditContext:
-    """规则共享的查询接口：订单热量/钠、营养匹配."""
-
     nutrition_table: dict
 
-    def nutrition_of(self, item_name: str):
-        """营养核算用精确匹配：套餐/组合名不得蹭用单品的营养（子项另计）."""
-        return match_nutrition(item_name, self.nutrition_table, exact_only=True)
+    def nutrition_of(self, name):
+        return match_nutrition(name, self.nutrition_table, exact_only=True)
 
-    def kcal_of_order(self, order) -> float | None:
-        return self._sum_order(order, "kcal")
+    def coverage(self, order, attr):
+        total, matched, missing, ambiguous = 0.0, 0, [], []
+        parts = list(components(order))
+        for part in parts:
+            if part["quantity"] is None:
+                ambiguous.append(part["name"])
+                continue
+            nutrition = self.nutrition_of(part["name"])
+            value = getattr(nutrition, attr) if nutrition else None
+            if value is None:
+                missing.append(part["name"])
+            else:
+                total += value * part["quantity"]
+                matched += 1
+        return {"value": total if matched else None, "matched": matched,
+                "total": len(parts), "missing": missing, "ambiguous": ambiguous,
+                "complete": bool(parts) and matched == len(parts)}
 
-    def sodium_of_order(self, order) -> float | None:
-        return self._sum_order(order, "sodium")
+    def kcal_of_order(self, order):
+        return self.coverage(order, "kcal")["value"]
 
-    def _sum_order(self, order, attr) -> float | None:
-        """按「主商品 + 套餐子项」两级汇总营养.
-
-        套餐本身在营养表常无条目（如 XX套餐/五选一），但其子项（汉堡/饮料）有——
-        两级都计入，避免套餐订单营养被记 0。
-        """
-        names = []
-        for i in order.items:
-            names.append((i["name"], i["quantity"]))
-            for sub in i.get("sub_items") or []:
-                # 子项格式 "可乐中杯 x1"
-                if " x" in sub:
-                    sname, sq = sub.rsplit(" x", 1)
-                    try:
-                        names.append((sname, int(sq)))
-                    except ValueError:
-                        names.append((sname, 1))
-                else:
-                    names.append((sub, 1))
-        total, matched_any = 0.0, False
-        for name, qty in names:
-            n = self.nutrition_of(name)
-            if n is not None and getattr(n, attr) is not None:
-                total += getattr(n, attr) * qty
-                matched_any = True
-        return total if matched_any else None
+    def sodium_of_order(self, order):
+        return self.coverage(order, "sodium")["value"]
 
 
 class AuditEngine:
-    def __init__(self, nutrition_table: dict):
+    def __init__(self, nutrition_table):
         self.ctx = AuditContext(nutrition_table)
         self.rules = self._load_rules()
 
     @staticmethod
     def _load_rules():
-        """自动发现 mcd_postmortem/rules/ 下所有规则的 Rule 子类."""
         import mcd_postmortem.rules as pkg
         rules = []
-        for m in pkgutil.iter_modules(pkg.__path__):
-            if m.name in ("base", "__init__"):
+        for module in sorted(pkgutil.iter_modules(pkg.__path__), key=lambda m: m.name):
+            if module.name == "base":
                 continue
-            mod = importlib.import_module(f"mcd_postmortem.rules.{m.name}")
-            for attr in vars(mod).values():
-                if (isinstance(attr, type) and issubclass(attr, Rule.__mro__[-2])
-                        and attr is not Rule):
-                    rules.append(attr())
-        return rules
+            mod = importlib.import_module(f"mcd_postmortem.rules.{module.name}")
+            for cls in vars(mod).values():
+                if (isinstance(cls, type) and issubclass(cls, Rule) and cls is not Rule
+                        and cls.__module__ == mod.__name__):
+                    rules.append(cls())
+        if len({r.rule_id for r in rules}) != len(rules):
+            raise ValueError("规则 ID 重复")
+        return sorted(rules, key=lambda r: r.rule_id)
 
-    def run(self, orders) -> list:
-        """执行全部规则，返回按严重度排序的事故列表."""
+    def run(self, orders):
+        orders = normalize_orders(orders)
         incidents = []
         for rule in self.rules:
             try:
                 incidents.extend(rule.check(orders, self.ctx))
-            except Exception as e:  # 单条规则失败不影响整体审计
-                incidents.append(_rule_error_incident(rule, e))
-        sev_rank = {s: i for i, s in enumerate(SEV_ORDER)}
-        incidents.sort(key=lambda x: sev_rank.get(x.sev, 99))
-        return incidents
+            except Exception as exc:
+                incidents.append(Incident(
+                    sev="INFO", rule_id=f"ENGINE-{rule.rule_id}",
+                    title=f"规则 {rule.rule_id} 执行失败",
+                    detail=f"该规则已跳过（{type(exc).__name__}）；本次审计不完整。",
+                ))
+        rank = {sev: i for i, sev in enumerate(SEV_ORDER)}
+        order_rank = {o.order_id: idx for idx, o in enumerate(orders)}
+        return sorted(incidents, key=lambda i: (
+            rank.get(i.sev, 99), i.rule_id,
+            min((order_rank.get(oid, len(orders)) for oid in i.order_ids), default=len(orders)),
+            tuple(i.order_ids), i.title))
 
-    def summary(self, orders, incidents) -> dict:
-        """报告头统计."""
-        kcal_total = sum(filter(None, (self.ctx.kcal_of_order(o) for o in orders)))
-        sodium_total = sum(filter(None, (self.ctx.sodium_of_order(o) for o in orders)))
-        amount_total = sum(o.total_amount for o in orders)
-        by_sev = {}
-        for i in incidents:
-            by_sev[i.sev] = by_sev.get(i.sev, 0) + 1
+    def summary(self, orders, incidents):
+        orders = normalize_orders(orders)
+        nutrition = {}
+        for attr in ("kcal", "sodium"):
+            rows = [self.ctx.coverage(o, attr) for o in orders]
+            matched = sum(r["matched"] for r in rows)
+            nutrition[attr] = {
+                "value": round(sum(r["value"] or 0 for r in rows), 1) if matched else None,
+                "matched": matched, "total": sum(r["total"] for r in rows),
+                "missing": sum(len(r["missing"]) for r in rows),
+                "ambiguous": sum(len(r["ambiguous"]) for r in rows),
+                "complete": bool(rows) and all(r["complete"] for r in rows),
+            }
+        table = {k: asdict(v) for k, v in sorted(self.ctx.nutrition_table.items())}
+        fingerprint = hashlib.sha256(json.dumps(
+            table, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
         return {
-            "orders": len(orders),
-            "kcal": round(kcal_total, 1) if kcal_total else 0,
-            "sodium": round(sodium_total, 1) if sodium_total else 0,
-            "amount": round(amount_total, 2),
+            "orders": len(orders), "kcal": nutrition["kcal"]["value"],
+            "sodium": nutrition["sodium"]["value"],
+            "amount": round(sum(o.total_amount for o in orders), 2),
             "incidents": len(incidents),
-            "by_sev": by_sev,
+            "by_sev": {sev: sum(i.sev == sev for i in incidents)
+                       for sev in SEV_ORDER if any(i.sev == sev for i in incidents)},
+            "nutrition": nutrition, "rulesetVersion": RULESET_VERSION,
+            "nutritionVersion": fingerprint,
+            "periodStart": orders[0].create_time.isoformat() if orders else None,
+            "periodEnd": orders[-1].create_time.isoformat() if orders else None,
+            "ruleErrors": sum(i.rule_id.startswith("ENGINE-") for i in incidents),
         }
-
-
-from mcd_postmortem.rules.base import Rule  # noqa: E402  (避免循环导入放底部)
-
-
-def _rule_error_incident(rule, exc) -> "object":
-    from mcd_postmortem.rules.base import Incident
-    return Incident(
-        sev="INFO", rule_id=f"ENGINE-{rule.rule_id}",
-        title=f"规则 {rule.rule_id} 执行失败",
-        detail=f"该规则在审计中抛出异常已跳过：{exc}",
-    )

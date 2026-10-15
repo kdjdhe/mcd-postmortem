@@ -2,7 +2,10 @@
 
 数据为虚构订单，涵盖全部规则触发场景。
 """
+import hashlib
 from datetime import datetime, timedelta
+
+DEMO_TIME = datetime(2026, 10, 15, 12, 0, 0)
 
 from mcd_postmortem.orders import Nutrition, Order
 
@@ -26,13 +29,13 @@ def demo_nutrition() -> dict:
             for k, v in ((n, (n, kcal, p, f, c, na, ca)) for n, kcal, p, f, c, na, ca in items)}
 
 
-def demo_orders() -> list:
-    now = datetime(2026, 10, 15, 12, 0, 0)
+def demo_orders(reference: datetime = DEMO_TIME) -> list:
+    now = reference
     rows = [
         # (天数前, 时间, 门店, [(名称, 数量, 子项)], 金额)
         (28, "12:31", "麦当劳上海福州路餐厅", [("巨无霸", 1, [])], 25.5),
         (27, "12:05", "麦当劳上海福州路餐厅", [("巨无霸", 1, [])], 25.5),
-        (26, "12:18", "麦当劳上海福州路餐厅", [("巨无霸", 1, [("可乐中杯", 1)])], 32.0),
+        (26, "12:18", "麦当劳上海福州路餐厅", [("巨无霸", 1, []), ("可乐中杯", 1, [])], 32.0),
         (20, "02:47", "麦当劳上海南京西路餐厅",
          [("麦辣鸡腿堡", 2, []), ("大薯条", 1, []), ("麦乐鸡5块", 2, [])], 71.5),
         (14, "12:49", "麦当劳上海福州路餐厅", [("板烧鸡腿堡", 1, [])], 23.5),
@@ -49,7 +52,7 @@ def demo_orders() -> list:
         order_items = []
         for n, q, subs in items:
             if n not in seen_names:
-                seen_names[n] = f"9900{abs(hash(n)) % 10000:04d}"
+                seen_names[n] = "DEMO-" + hashlib.sha256(n.encode("utf-8")).hexdigest()[:12]
             order_items.append({"name": n, "code": seen_names[n], "quantity": q,
                                 "sub_items": [f"{s} x{sq}" for s, sq in subs]})
         orders.append(Order(

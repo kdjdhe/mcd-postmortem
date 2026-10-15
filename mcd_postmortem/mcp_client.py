@@ -1,8 +1,4 @@
-"""麦当劳 MCP Server 客户端.
-
-Streamable HTTP + Bearer Token，单次部署调用数 ≤ 6，远低于官方 600 req/min 限流；
-遇到 429 时指数退避重试。
-"""
+"""麦当劳只读 MCP 客户端：限制为订单与营养查询，不携带写工具封装。"""
 import json
 import os
 import time
@@ -11,6 +7,7 @@ import urllib.request
 
 MCP_URL = "https://mcp.mcd.cn"
 TIMEOUT = 30
+READ_TOOLS = frozenset({"order-list", "list-nutrition-foods"})
 
 
 class McpError(RuntimeError):
@@ -21,121 +18,80 @@ class McpClient:
     def __init__(self, token: str | None = None, url: str = MCP_URL):
         self.token = token or os.environ.get("MCD_MCP_TOKEN")
         if not self.token:
-            raise McpError(
-                "未找到 MCP Token。请先在 https://open.mcd.cn/mcp 控制台申请，"
-                "并 export MCD_MCP_TOKEN=..."
-            )
+            raise McpError("未找到 MCD_MCP_TOKEN。可先运行 mcd-postmortem demo。")
         self.url = url
         self._next_id = 0
 
-    def _request(self, method: str, params: dict) -> dict:
+    def _request(self, method, params):
         self._next_id += 1
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self._next_id,
-            "method": method,
-            "params": params,
-        }
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        delay = 1.0
+        request_id = self._next_id
+        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json",
+                   "Accept": "application/json, text/event-stream"}
         for attempt in range(3):
-            req = urllib.request.Request(
-                self.url, data=json.dumps(payload).encode("utf-8"),
-                headers=headers, method="POST",
-            )
+            req = urllib.request.Request(self.url, data=json.dumps(payload).encode(),
+                                         headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-                    body = json.loads(resp.read().decode("utf-8"))
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+                    raw = response.read().decode("utf-8")
                 break
-            except urllib.error.HTTPError as e:
-                if e.code == 429 and attempt < 2:
-                    time.sleep(delay)
-                    delay *= 2
+            except urllib.error.HTTPError as exc:
+                if exc.code == 429 and attempt < 2:
+                    time.sleep(2 ** attempt)
                     continue
-                raise McpError(f"MCP 服务返回 HTTP {e.code}") from e
-            except urllib.error.URLError as e:
-                raise McpError(f"无法连接 MCP 服务 {self.url}: {e.reason}") from e
-        else:
-            raise McpError("MCP 请求重试耗尽")
-
-        if "error" in body:
-            raise McpError(f"MCP 错误: {body['error']}")
-        return body.get("result", {})
-
-    def call_tool(self, name: str, arguments: dict | None = None):
-        """调用一个 MCP Tool，返回解析后的业务 JSON（data 部分）."""
-        result = self._request("tools/call", {"name": name, "arguments": arguments or {}})
-        texts = [
-            c.get("text", "")
-            for c in result.get("content", [])
-            if c.get("type") == "text"
-        ]
-        raw = "\n".join(texts)
-        # 服务端返回内容为「给 LLM 的说明文字 + JSON + 可能的尾注」的拼接，
-        # 用增量解码器取出第一个完整 JSON 对象
-        start = raw.find('{"success"')
-        if start < 0:
-            raise McpError(f"{name} 返回格式异常: {raw[:200]}")
+                raise McpError(f"MCP 服务返回 HTTP {exc.code}") from None
+            except (urllib.error.URLError, TimeoutError, UnicodeError):
+                raise McpError("MCP 连接或响应解码失败，请检查网络后重试") from None
         try:
-            payload, _ = json.JSONDecoder().raw_decode(raw[start:])
-        except json.JSONDecodeError as e:
-            raise McpError(f"{name} 返回 JSON 解析失败: {e}") from e
-        if not payload.get("success"):
-            raise McpError(f"{name} 业务失败: {payload.get('code')} {payload.get('message')}")
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            # Streamable HTTP 的 SSE 响应可包含通知/心跳；选取当前请求的 JSON-RPC 响应。
+            body = None
+            for event in raw.replace("\r\n", "\n").split("\n\n"):
+                text = "\n".join(line[5:].lstrip() for line in event.splitlines()
+                                 if line.startswith("data:"))
+                try:
+                    candidate = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and candidate.get("id") == request_id:
+                    body = candidate
+                    break
+        if not isinstance(body, dict) or body.get("id") != request_id:
+            raise McpError("MCP 响应格式或请求编号异常")
+        if "error" in body:
+            raise McpError("MCP 返回 JSON-RPC 错误")
+        result = body.get("result")
+        if not isinstance(result, dict):
+            raise McpError("MCP result 格式异常")
+        return result
+
+    def call_tool(self, name, arguments=None):
+        if name not in READ_TOOLS:
+            raise McpError(f"本客户端仅允许只读工具：{', '.join(sorted(READ_TOOLS))}")
+        result = self._request("tools/call", {"name": name, "arguments": arguments or {}})
+        if result.get("isError"):
+            raise McpError(f"{name} 工具执行失败")
+        payload = result.get("structuredContent")
+        if not isinstance(payload, dict) or "success" not in payload:
+            raw = "\n".join(c.get("text", "") for c in result.get("content", [])
+                            if c.get("type") == "text")
+            decoder, payload = json.JSONDecoder(), None
+            for index, ch in enumerate(raw):
+                if ch != "{":
+                    continue
+                try:
+                    candidate, _ = decoder.raw_decode(raw[index:])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict) and "success" in candidate:
+                    payload = candidate
+                    break
+        if not isinstance(payload, dict):
+            raise McpError(f"{name} 未返回可识别的业务结果")
+        if payload.get("success") is not True:
+            raise McpError(f"{name} 业务失败（响应内容已省略）")
         return payload.get("data")
 
-    # ---- 流水线用到的 Tool 封装 ----
-
-    def time_info(self) -> dict:
-        return self.call_tool("now-time-info")
-
-    def nearby_stores(self, city: str, keyword: str, be_type: int = 1) -> list:
-        return self.call_tool("query-nearby-stores", {
-            "beType": be_type, "searchType": 2, "city": city, "keyword": keyword,
-        }) or []
-
-    def meals(self, store_code: str, order_type: int = 1, be_type: int = 1) -> dict:
-        return self.call_tool("query-meals", {
-            "storeCode": store_code, "orderType": order_type, "beType": be_type,
-        }) or {}
-
-    def my_coupons(self) -> list:
-        data = self.call_tool("query-my-coupons")
-        if isinstance(data, dict):
-            return data.get("coupons") or data.get("list") or []
-        return data or []
-
-    def calculate_price(self, store_code: str, items: list, order_type: int = 1,
-                        be_type: int = 1) -> dict:
-        return self.call_tool("calculate-price", {
-            "storeCode": store_code, "orderType": order_type, "beType": be_type,
-            "items": items,
-        }) or {}
-
-    def create_order(self, store_code: str, items: list, take_way_code: str,
-                     order_type: int = 1, be_type: int = 1) -> dict:
-        return self.call_tool("create-order", {
-            "storeCode": store_code, "orderType": order_type, "beType": be_type,
-            "takeWayCode": take_way_code, "items": items,
-        }) or {}
-
-    def query_order(self, order_id: str) -> dict:
-        return self.call_tool("query-order", {"orderId": order_id}) or {}
-
-    def cancel_order(self, order_id: str, reason_code: str = "1") -> dict:
-        return self.call_tool("cancel-order", {
-            "orderId": order_id, "cancelReasonCode": reason_code,
-        }) or {}
-
-    def order_list(self) -> list:
+    def order_list(self):
         return self.call_tool("order-list") or []
-
-    def available_coupons(self) -> list:
-        return self.call_tool("available-coupons") or []
-
-    def claim_coupons(self) -> dict:
-        return self.call_tool("auto-bind-coupons") or {}

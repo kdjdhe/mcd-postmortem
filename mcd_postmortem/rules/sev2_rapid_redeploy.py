@@ -17,7 +17,7 @@ class RapidRedeployRule(Rule):
                     detail=(
                         f"{prev.create_time.strftime('%m-%d %H:%M')} 部署 {_names(prev)} 后，"
                         f"仅 {gap:.0f} 分钟又于 {curr.store_name} 部署 {_names(curr)}。"
-                        f"首次部署未经过充分评审即被回滚替换，属于典型的变更管理失控。"
+                        f"命中短时间连续下单规则；仅凭时间间隔无法判断是否取消或替换了前单。"
                     ),
                     order_ids=[prev.order_id, curr.order_id],
                     evidence={"gapMinutes": round(gap, 1),

@@ -3,4 +3,4 @@ from mcd_postmortem.engine import AuditEngine
 from mcd_postmortem.rules.base import Incident
 
 __all__ = ["AuditEngine", "Incident"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -23,8 +23,8 @@ class PeakHourRule(Rule):
                     detail=(
                         f"{o.create_time.strftime('%m-%d %H:%M')} 处于午高峰（11:30–13:00），"
                         f"仍选择到店自取（{_names(o)}）。"
-                        f"高峰期变更需进入发布队列（排队取餐），"
-                        f"建议错峰部署或使用预约发布（reservationDate）。"
+                        f"命中午间到店窗口规则；未获取实际排队时长，"
+                        f"可按门店情况选择取餐时间。"
                     ),
                     order_ids=[o.order_id],
                     evidence={"orderId": o.order_id, "createTime": o.create_time.isoformat()},

@@ -1,0 +1,4 @@
+include README.md LICENSE CHANGELOG.md CONTEST_DECLARATION.md MCP_INTEGRATION.md
+include workbuddy.md mcp-config.example.json uv.lock
+recursive-include docs *.png *.md
+recursive-include tests *.py

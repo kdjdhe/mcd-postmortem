@@ -1,192 +1,104 @@
-"""终端富文本渲染：Postmortem 报告（无第三方依赖，纯 ANSI）."""
+"""终端报告：事实、数据覆盖率与趣味解读分开呈现。"""
 import os
 import sys
 import unicodedata
-from datetime import datetime
 
-from mcd_postmortem.rules.base import SEV_ORDER, SEV_TITLES
+from mcd_postmortem.presentation import (coverage_text, nutrient_text, period_text,
+                                         report_id, source_label, status_label, audit_now)
 
-# ANSI 颜色
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_RED = "\033[31m"
-_YELLOW = "\033[33m"
-_GREEN = "\033[32m"
-_CYAN = "\033[36m"
-_MAGENTA = "\033[35m"
-_WHITE = "\033[37m"
-
-SEV_STYLE = {
-    "SEV1": (_RED, "▓▒░"), "SEV2": (_YELLOW, "▒░ "), "SEV3": (_MAGENTA, "░  "),
-    "SEV4": (_CYAN, "·  "), "SEV5": (_WHITE, "   "), "INFO": (_GREEN, "✓  "),
-}
-
-WIDTH = 72
+_RESET, _BOLD, _CYAN = "\033[0m", "\033[1m", "\033[36m"
+WIDTH = 78
 
 
-def _color_enabled() -> bool:
-    return sys.stdout.isatty() or os.environ.get("FORCE_COLOR")
+def _color_enabled():
+    if "NO_COLOR" in os.environ:
+        return False
+    return bool(os.environ.get("FORCE_COLOR")) or sys.stdout.isatty()
 
 
 def _c(code, text):
     return f"{code}{text}{_RESET}" if _color_enabled() else text
 
 
-def render_report(orders, incidents, summary, generated_at: datetime | None = None) -> str:
-    now = generated_at or datetime.now()
-    inc_id = f"INC-{now.strftime('%Y%m%d')}-{max(1, len(incidents)):04d}"
-    lines = []
-    w = WIDTH
-
-    def line(ch="─", color=_DIM):
-        lines.append(_c(color, ch * w))
-
-    def center(text, color=""):
-        pad = max(0, (w - _disp_len(text)) // 2)
-        lines.append(" " * pad + (_c(color, text) if color else text))
-
-    def kv(k, v):
-        lines.append(f"  {_c(_DIM, k.ljust(12))}{v}")
-
-    line("╭" + "─" * (w - 2) + "╮", _DIM) if False else line("═", _CYAN)
-    center("事 故 复 盘 报 告", _BOLD + _CYAN)
-    center("Incident Postmortem · mcd-postmortem 自动生成", _DIM)
-    line("═", _CYAN)
-    kv("事故编号", inc_id)
-    kv("审计时间", now.strftime("%Y-%m-%d %H:%M:%S"))
-    kv("审计范围", f"近 30 天 {summary['orders']} 笔生产变更（订单）")
-    kv("事故总数", f"{summary['incidents']} 起  "
-       + "  ".join(f"{k}×{v}" for k, v in sorted(summary['by_sev'].items())))
-    lines.append("")
-
-    # ---- 概述 ----
-    lines.append(_c(_BOLD, "▍事故概述"))
-    if orders:
-        first, last = orders[0], orders[-1]
-        span_days = max(1, (now - first.create_time).days)
-        lines.append(
-            f"  自 {first.create_time.strftime('%Y-%m-%d')} 起，生产环境（你的胃）"
-            f"共受理 {summary['orders']} 次变更申请，")
-        lines.append(
-            f"  累计负载 {summary['kcal']:.0f} kcal / 钠 {summary['sodium']:.0f} mg，"
-            f"支出 ¥{summary['amount']:.2f}，观察窗口 {span_days} 天。")
-        sev1 = [i for i in incidents if i.sev == "SEV1"]
-        if sev1:
-            lines.append(f"  {_c(_RED, '本次审计发现重大生产事故 %d 起，需管理层（你）立即知悉。' % len(sev1))}")
-        elif incidents:
-            lines.append(f"  本次审计发现一般事故 {len(incidents)} 起，均在可控范围内。")
-        else:
-            lines.append(_c(_GREEN, "  本次审计未发现事故。这本身就是一个奇迹，建议写进年报。"))
-    else:
-        lines.append("  观察窗口内没有生产变更记录。要么你很自律，要么你还没用 MCP 下过单。")
-    lines.append("")
-
-    # ---- 时间线 ----
-    if orders:
-        lines.append(_c(_BOLD, "▍变更时间线（Timeline）"))
-        for o in orders:
-            kcal = None
-            stamp = o.create_time.strftime("%m-%d %H:%M")
-            names = "、".join(i["name"] for i in o.items)
-            lines.append(f"  {_c(_DIM, stamp)}  {names}  ¥{o.total_amount:.2f}  "
-                         f"{_c(_DIM, o.store_name)}")
-        lines.append("")
-
-    # ---- 事故明细 ----
-    if incidents:
-        lines.append(_c(_BOLD, "▍事故明细（按严重度排序）"))
-        lines.append("")
-        for idx, inc in enumerate(incidents, 1):
-            color, bar = SEV_STYLE.get(inc.sev, (_WHITE, ""))
-            lines.append(f"  {bar}{_c(color + _BOLD, inc.sev)} {_c(_DIM, inc.rule_id)}"
-                         f"  {inc.title}")
-            for det in _wrap(inc.detail, w - 6):
-                lines.append(f"      {det}")
-            if inc.order_ids:
-                oid = inc.order_ids[0]
-                lines.append(f"      {_c(_DIM, '证据: orderId=' + oid[:18] + '…')}")
-            lines.append("")
-    else:
-        lines.append(_c(_BOLD, "▍事故明细"))
-        lines.append("  （无）")
-        lines.append("")
-
-    # ---- 根因 ----
-    lines.append(_c(_BOLD, "▍根因分析（Root Cause）"))
-    rc = _root_cause(orders, incidents)
-    for det in _wrap(rc, w - 4):
-        lines.append(f"  {det}")
-    lines.append("")
-
-    # ---- Action items ----
-    lines.append(_c(_BOLD, "▍后续行动（Action Items）"))
-    items = _action_items(incidents)
-    for it in items:
-        lines.append(f"  ☐ {it}")
-    if not items:
-        lines.append("  ☐ 继续保持。审计小组对你的表现表示赞许。")
-    lines.append("")
-
-    line("═", _CYAN)
-    center("—— 本报告由 mcd-postmortem 生成 · 数据源：麦当劳官方 MCP ——", _DIM)
-    center("结论仅供参考，不构成医疗、营养或投资建议。餐品信息以官方渠道为准。", _DIM)
+def render_report(orders, incidents, summary, generated_at=None):
+    now = generated_at or audit_now()
+    lines = [_c(_CYAN, "═" * WIDTH), _c(_BOLD, "事故复盘报告 · Incident Postmortem"),
+             f"事故编号：{report_id(orders, summary, now)}",
+             f"审计时间：{now:%Y-%m-%d %H:%M:%S}（北京时间）",
+             f"数据来源：{source_label(summary)}",
+             f"订单范围：{period_text(summary)}，共 {summary['orders']} 笔",
+             f"状态口径：{status_label(summary)}",
+             f"规则版本：{summary['rulesetVersion']}；营养版本：{summary['nutritionVersion'][:12]}"]
+    if summary.get("sinceDays"):
+        lines.append(f"筛选条件：审计时间之前 {summary['sinceDays']} 天（含边界）")
+    if summary.get("excludedByStatus"):
+        lines.append("状态排除：" + "、".join(f"{s} {n} 笔" for s, n in summary["excludedByStatus"].items()))
+    if summary.get("severityFilter"):
+        lines.append(f"等级筛选：{summary['severityFilter']}；全部规则事件 "
+                     f"{summary['totalIncidentsBeforeFilter']} 起，本页展示 {len(incidents)} 起")
+    lines.extend(["", "▍订单餐品统计", nutrient_text(summary), coverage_text(summary),
+                  f"订单实付合计 ¥{summary['amount']:.2f}；餐品总量不代表个人实际摄入。",
+                  "", "▍变更时间线（Timeline）"])
+    for order in orders:
+        names = "、".join(f"{i['name']} ×{i['quantity']}" for i in order.items)
+        lines.append(f"{order.create_time:%Y-%m-%d %H:%M}  {names}  ¥{order.total_amount:.2f}")
+    if not orders:
+        lines.append("所选范围无订单，无法进行行为判断。")
+    lines.extend(["", f"▍规则事件：{len(incidents)} 起（含数据提示）"])
+    for incident in incidents:
+        lines.append(f"[{incident.sev}] {incident.rule_id}  {incident.title}")
+        lines.extend("  " + line for line in _wrap(incident.detail, WIDTH - 4))
+        if incident.order_ids:
+            lines.append("  证据订单：" + "、".join(incident.order_ids))
+    if not incidents:
+        lines.append("当前筛选下没有规则事件；不代表营养完整或健康结论。")
+    if summary["ruleErrors"]:
+        lines.append("审计不完整：有规则执行失败，请查看 ENGINE-* 事件。")
+    lines.extend(["", "▍趣味解读（非事实根因）", _root_cause(orders, incidents),
+                  "", "▍后续行动（Action Items）"])
+    lines.extend("☐ " + item for item in _action_items(incidents))
+    lines.extend(["", "═" * WIDTH, "本报告使用程序员事故复盘梗；规则阈值不构成医疗或营养标准。"])
     return "\n".join(lines)
 
 
-def _root_cause(orders, incidents) -> str:
+def _root_cause(orders, incidents):
     if not orders:
-        return "无变更记录，无根因可查。"
-    noon = sum(1 for o in orders if 11 <= o.create_time.hour < 14)
-    night = sum(1 for o in orders if o.create_time.hour < 5)
-    mono = next((i for i in incidents if i.rule_id == "SEV2-MONO-DEPENDENCY"), None)
+        return "暂无订单样本，审计小组暂时下班。"
     parts = []
-    if noon:
-        parts.append(f"观察期 {noon}/{len(orders)} 次变更集中在午间决策疲劳窗口（11:00–14:00），"
-                     "决策系统降级为「上次吃啥这次还吃啥」模式")
-    if night:
-        parts.append(f"{night} 次变更发生在凌晨，变更审批流程（理智）处于离线状态")
-    if mono:
-        parts.append(f"存在对 {mono.evidence.get('itemName', '特定单品')} 的路径依赖，"
-                     "备选方案演练不足")
-    if not parts:
-        parts.append("变更流程整体健康，未发现系统性根因；个别事故归因于偶发流量（馋）")
-    return "；".join(parts) + "。"
-
-
-def _action_items(incidents) -> list:
-    items = []
-    if any(i.rule_id == "SEV1-LATE-NIGHT" for i in incidents):
-        items.append("P0 为变更审批系统（理智）配置值班 schedule：00:00 后自动拒绝需求（Owner: 你）")
     if any(i.rule_id == "SEV2-MONO-DEPENDENCY" for i in incidents):
-        items.append("P0 为关键单品引入冗余备份，完成至少 1 次灰度验证（点一次别的）")
-    if any(i.rule_id == "SEV1-CALORIE-OVERLOAD" for i in incidents):
-        items.append("P1 后续变更前核对官方营养表，单笔负载控制在 1500 kcal 以内")
-    if any(i.rule_id == "SEV4-SODIUM-ALARM" for i in incidents):
-        items.append("P1 关注减盐配置：同款变更存在低钠替代方案时优先采纳")
-    if any(i.rule_id == "SEV5-PEAK-DEPLOY" for i in incidents):
-        items.append("P2 午高峰变更换用预约发布（reservationDate）或错峰执行")
-    if any(i.rule_id == "SEV2-RAPID-REDEPLOY" for i in incidents):
-        items.append("P2 下单前增加冷静期（购物车放置 5 分钟）再提交变更")
-    if not items:
-        items.append("P3 输出最佳实践文档，供团队（朋友们）学习")
-    return items
+        parts.append("菜单备份演练欠费，决策系统一直复用上个版本")
+    if any(i.rule_id == "SEV1-LATE-NIGHT" for i in incidents):
+        parts.append("深夜审批系统（理智）可能已经离线")
+    return "；".join(parts or ["审计小组已阅；以上事件仅供趣味回顾，真实动机未知"]) + "。"
 
 
-def _disp_len(s: str) -> int:
-    import unicodedata
-    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in s)
+def _action_items(incidents):
+    items = []
+    ids = {i.rule_id for i in incidents}
+    if "SEV2-MONO-DEPENDENCY" in ids:
+        items.append("为常点单品准备一个菜单备选，完成一次灰度尝鲜。")
+    if "SEV2-RAPID-REDEPLOY" in ids:
+        items.append("下单前复核购物车，减少遗漏后补单。")
+    if "INFO-404-UNTRACKED" in ids:
+        items.append("核对未匹配餐品与官方营养表，补齐数据后再看总量。")
+    if any(i.startswith("ENGINE-") for i in ids):
+        items.append("修复失败规则后重新运行审计。")
+    return items or ["核对数据口径，按自己的需要安排下一次点餐。"]
 
 
-def _wrap(text: str, width: int) -> list:
-    lines, cur, cur_len = [], [], 0
+def _disp_len(text):
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
+def _wrap(text, width):
+    rows, current, size = [], [], 0
     for ch in text:
-        ch_len = 2 if unicodedata.east_asian_width(ch) in "WF" else 1
-        if cur_len + ch_len > width:
-            lines.append("".join(cur))
-            cur, cur_len = [], 0
-        cur.append(ch)
-        cur_len += ch_len
-    if cur:
-        lines.append("".join(cur))
-    return lines
+        length = _disp_len(ch)
+        if size + length > width:
+            rows.append("".join(current))
+            current, size = [], 0
+        current.append(ch)
+        size += length
+    if current:
+        rows.append("".join(current))
+    return rows
