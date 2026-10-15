@@ -1,0 +1,44 @@
+# Git 忽略清单 —— 安全第一
+# 官方参赛声明要求：提交材料不得包含真实 Token/密钥/密码
+mcp token.txt
+*.token
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# 调试产物
+*_test.json
+meals*.json
+price*.json
+mcp_*.json
+mcp_headers.txt
+
+# 本地进度（不属于参赛仓库）
+PROGRESS.md
+issues_p*.json
+ranking.md
+doc_*.js
+doc_page.html
+extract_doc.py
+mcp_call.py
+meals_raw.txt
+
+# postmortem 调试产物
+*_test.json
+nutrition_clean.json
+all_issues.json
+issues_p*.json
+ranking.md
+doc_*.js
+doc_page.html
+extract_doc.py
+mcp_call.py
+meals_raw.txt
+.nutrition_cache.json

@@ -1,0 +1,32 @@
+"""SEV1 · 单笔热量过载：订单合计 ≥ 1500 kcal."""
+from mcd_postmortem.rules.base import Incident, Rule
+
+KCAL_LIMIT = 1500
+
+
+class CalorieOverloadRule(Rule):
+    sev = "SEV1"
+    rule_id = "SEV1-CALORIE-OVERLOAD"
+
+    def check(self, orders, ctx):
+        out = []
+        for o in orders:
+            kcal = ctx.kcal_of_order(o)
+            if kcal and kcal >= KCAL_LIMIT:
+                out.append(Incident(
+                    sev=self.sev, rule_id=self.rule_id,
+                    title=f"单笔热量过载（{kcal:.0f} kcal ≥ 阈值 {KCAL_LIMIT} kcal）",
+                    detail=(
+                        f"{o.create_time.strftime('%m-%d %H:%M')} 的变更 "
+                        f"（{_names(o)}）经官方营养表核定负载 {kcal:.0f} kcal，"
+                        f"超出单次变更安全阈值 {KCAL_LIMIT} kcal。"
+                        f"配置管理数据库（你的体重秤）已记录本次偏差。"
+                    ),
+                    order_ids=[o.order_id],
+                    evidence={"orderId": o.order_id, "kcal": kcal, "threshold": KCAL_LIMIT},
+                ))
+        return out
+
+
+def _names(o) -> str:
+    return "、".join(i["name"] for i in o.items)
