@@ -211,8 +211,8 @@ class CliTests(unittest.TestCase):
         rows[1].create_time = DEMO_TIME - timedelta(days=1)
         rows[2].create_time = DEMO_TIME
         rows[3].create_time = DEMO_TIME + timedelta(seconds=1)
-        with patch("mcd_postmortem.cli.McpClient"), patch("mcd_postmortem.cli.fetch_orders", return_value=rows), \
-                patch("mcd_postmortem.cli.load_nutrition", return_value=table()):
+        with patch("mcd_postmortem.service.McpClient"), patch("mcd_postmortem.service.fetch_orders", return_value=rows), \
+                patch("mcd_postmortem.service.load_nutrition", return_value=table()):
             result = json.loads(cli("audit", "--json", "--since", "1d", "--at", DEMO_TIME.isoformat())[0])
         self.assertEqual(result["summary"]["orders"], 2)
 
@@ -284,8 +284,8 @@ class CliTests(unittest.TestCase):
         rows[2].create_time = DEMO_TIME
         rows[1].order_status = "已取消"
         rows[2].order_status = "未知状态"
-        with patch("mcd_postmortem.cli.McpClient"), patch("mcd_postmortem.cli.fetch_orders", return_value=rows), \
-                patch("mcd_postmortem.cli.load_nutrition", return_value=table()):
+        with patch("mcd_postmortem.service.McpClient"), patch("mcd_postmortem.service.fetch_orders", return_value=rows), \
+                patch("mcd_postmortem.service.load_nutrition", return_value=table()):
             result = json.loads(cli("audit", "--json", "--at", DEMO_TIME.isoformat())[0])
             self.assertEqual(result["summary"]["orders"], 1)
             self.assertEqual(result["summary"]["excludedByStatus"], {"已取消": 1, "未知状态": 1})

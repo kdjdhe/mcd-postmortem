@@ -8,13 +8,16 @@
 
 ![合成数据演示卡片](docs/report_card.png)
 
-**目录**：[安装](#安装) · [用法](#用法) · [常用命令](#常用命令) · [七条规则](#七条规则) · [套餐与缺失数据](#套餐与缺失数据) · [可复现与分享](#可复现与分享) · [测试](#测试) · [维护](#维护)
+**目录**：[安装](#安装) · [桌面界面（GUI）](#桌面界面gui) · [用法](#用法) · [常用命令](#常用命令) · [七条规则](#七条规则) · [套餐与缺失数据](#套餐与缺失数据) · [可复现与分享](#可复现与分享) · [测试](#测试) · [维护](#维护)
 
 ## 安装
 
 **方式一：下载 exe（Windows，免安装）**
 
-从 [GitHub Releases](https://github.com/kdjdhe/mcd-postmortem/releases/latest) 下载 `mcd-postmortem.exe`，放到任意目录直接运行：
+从 [GitHub Releases](https://github.com/kdjdhe/mcd-postmortem/releases/latest) 下载，放到任意目录：
+
+- **`mcd-postmortem-gui.exe`（推荐）**：双击打开桌面窗口，无需命令行。
+- `mcd-postmortem.exe`：命令行版本，适合脚本与终端用户。
 
 ```powershell
 .\mcd-postmortem.exe demo
@@ -31,6 +34,8 @@ mcd-postmortem demo
 mcd-postmortem demo --card demo.png
 ```
 
+需要桌面界面时安装 GUI 可选依赖：`python -m pip install ".[gui]"`，然后运行 `mcd-postmortem-gui`。
+
 Pillow 会随安装自动获得。Windows 自动使用系统中文字体；Linux 建议安装 Noto CJK，其他字体可通过 `MCD_FONT` 指定中文字体文件路径。
 
 项目包含 `uv.lock`，使用 uv 可复现依赖安装：
@@ -39,6 +44,21 @@ Pillow 会随安装自动获得。Windows 自动使用系统中文字体；Linux
 uv sync --locked
 uv run mcd-postmortem demo
 ```
+
+## 桌面界面（GUI）
+
+不想记命令的话，双击 `mcd-postmortem-gui.exe` 即可：
+
+![桌面界面](docs/gui-home.png)
+
+- 左侧按钮用合成数据一键演示；右侧粘贴 Token 即可审计真实订单。
+- 审计在后台线程执行，窗口实时显示当前阶段，不会卡死。
+- 结果页直接预览分享卡片，可保存 PNG、复制 JSON、打开所在文件夹。
+- 高级选项：时间范围、严重级别、套餐口径、固定审计时间、全部状态、刷新缓存。
+
+![审计结果页](docs/gui-result.png)
+
+GUI 使用 CustomTkinter，Token 只保留在内存中，不写入磁盘。
 
 ## 用法
 
@@ -173,7 +193,7 @@ python -m unittest discover -s tests -v
 
 ## 维护
 
-Windows 免安装 exe 用 PyInstaller 打包：`build_exe.bat`（或见脚本内的 PyInstaller 命令）。注意必须带 `--collect-submodules mcd_postmortem`——规则引擎用 `pkgutil.iter_modules` 动态发现规则模块，静态分析收不齐，漏了会静默少报事件。
+Windows 免安装 exe 用 PyInstaller 打包：CLI 用 `build_exe.bat`，桌面 GUI 用 `build_gui_exe.bat`。注意必须带 `--collect-submodules mcd_postmortem`——规则引擎用 `pkgutil.iter_modules` 动态发现规则模块，静态分析收不齐，漏了会静默少报事件。GUI 还需 `--collect-all customtkinter` 打包主题资源。
 
 目标用户：喜欢 OnCall / SRE 复盘梗的程序员、想用一张报告回顾点餐习惯的人。本项目聚焦历史审计，点餐工作流可参考 mcd-git、MealCI 等项目。
 

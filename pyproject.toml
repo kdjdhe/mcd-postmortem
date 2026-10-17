@@ -1,6 +1,6 @@
 [project]
 name = "mcd-postmortem"
-version = "0.2.0"
+version = "0.3.0"
 description = "麦门彻查 · 把你的麦当劳历史订单审计成一份正经的 SRE 事故复盘报告"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,9 +13,18 @@ dependencies = ["Pillow>=10.4,<13"]
 [project.scripts]
 mcd-postmortem = "mcd_postmortem.cli:main"
 
+[project.gui-scripts]
+mcd-postmortem-gui = "mcd_postmortem.gui.app:main"
+
+[project.optional-dependencies]
+gui = ["customtkinter>=5.2"]
+
 [build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["mcd_postmortem*"]
+
+[tool.setuptools.package-data]
+"mcd_postmortem.gui" = ["icon.ico"]
