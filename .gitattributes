@@ -3,4 +3,5 @@
 *.md text eol=lf
 *.toml text eol=lf
 *.lock text eol=lf
+*.bat text eol=crlf
 *.png binary
