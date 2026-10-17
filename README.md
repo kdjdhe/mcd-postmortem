@@ -2,11 +2,15 @@
 
 > 你的每一次点餐，都是一次生产环境变更。吃完之后，审计小组来写复盘。
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 把历史订单变成一份程序员风格的 SRE 事故复盘报告：确定性规则、订单证据、时间线、趣味解读和可分享 PNG 卡片。无需 LLM。
 
 ![合成数据演示卡片](docs/report_card.png)
 
-## 安装与第一次体验
+**目录**：[安装](#安装) · [用法](#用法) · [常用命令](#常用命令) · [七条规则](#七条规则) · [套餐与缺失数据](#套餐与缺失数据) · [可复现与分享](#可复现与分享) · [测试](#测试) · [维护](#维护)
+
+## 安装
 
 **方式一：下载 exe（Windows，免安装）**
 
@@ -36,9 +40,13 @@ uv sync --locked
 uv run mcd-postmortem demo
 ```
 
+## 用法
+
+### 第一次体验：demo（无需 Token）
+
 演示不需要 Token，订单与营养数据都是合成样例；默认审计基准固定在 **2026-10-15 12:00（北京时间）**，跨进程运行得到相同报告。可用 `--at` 把演示样例平移到另一个审计时间。
 
-## 审计真实订单
+### 审计真实订单
 
 在麦当劳官方 [MCP 控制台](https://open.mcd.cn/mcp) 申请 Token，通过环境变量传入。PowerShell：
 
@@ -59,7 +67,11 @@ mcd-postmortem audit
 
 只使用 `order-list` 和 `list-nutrition-foods` 两个查询工具，客户端拒绝其他工具名。这是程序的调用边界，不代表账号 Token 本身具有只读权限。
 
+`--since` 是相对审计时间的窗口，包含两端边界，不包含未来订单。默认审计所有已返回且不晚于审计时间的已完成订单；**不假设接口一定只返回近 30 天**。报告显示实际最早/最晚订单日期，并列出按状态排除的数量。未知状态默认排除，可用 `--all-statuses` 显式纳入。
+
 ## 常用命令
+
+子命令只有两个：`audit`（审计真实历史订单）与 `demo`（合成数据演示，参数相同）。
 
 ```bash
 # stdout 是纯 UTF-8 JSON，提示与错误写入 stderr
@@ -81,7 +93,36 @@ mcd-postmortem audit --refresh-nutrition
 mcd-postmortem audit --all-statuses
 ```
 
-`--since` 是相对审计时间的窗口，包含两端边界，不包含未来订单。默认审计所有已返回且不晚于审计时间的已完成订单；**不假设接口一定只返回近 30 天**。报告显示实际最早/最晚订单日期，并列出按状态排除的数量。未知状态默认排除，可用 `--all-statuses` 显式纳入。
+### 参数
+
+| 参数 | 适用 | 说明 |
+|---|---|---|
+| `--since 30d` / `2w` | audit、demo | 相对审计时间的窗口，含两端边界 |
+| `--sev SEV1..SEV5 / INFO` | audit、demo | 只显示指定级别，不改变统计范围 |
+| `--at <ISO 时间>` | audit、demo | 固定审计时间（默认北京时间），用于复现 |
+| `--json` | audit、demo | 标准输出仅写 JSON |
+| `--card 文件.png` | audit、demo | 生成隐藏门店/订单号的 PNG 卡片 |
+| `--all-statuses` | audit、demo | 纳入未完成/未知状态订单 |
+| `--refresh-nutrition` | 仅 audit | 刷新七天营养缓存 |
+| `--combo-quantities` | 仅 audit | 套餐子项数量口径：`unknown`（默认）/ `per-parent` / `per-order` |
+| `--version` | 全局 | 打印版本 |
+
+### 环境变量
+
+| 变量 | 必需 | 说明 |
+|---|---|---|
+| `MCD_MCP_TOKEN` | audit 必需 | 麦当劳 MCP 控制台申请的 Token，缺失时 audit 报错退出 |
+| `MCD_FONT` | 可选 | 中文字体文件路径，覆盖系统默认字体选择 |
+| `NO_COLOR` / `FORCE_COLOR` | 可选 | 关闭 / 强制终端彩色输出 |
+
+### 退出码
+
+| 码 | 含义 |
+|---|---|
+| 0 | 正常完成 |
+| 1 | 运行错误（Token 缺失、参数错误、接口失败等） |
+| 2 | 不完整审计：有规则执行失败，产生 `ENGINE-*` 事件 |
+| 130 | 用户中断（Ctrl+C） |
 
 ## 七条规则
 
@@ -121,16 +162,18 @@ mcd-postmortem audit --combo-quantities per-order
 
 终端与 JSON 保留证据订单号，适合本地核对；PNG 分享版隐藏订单号与具体门店，仍包含日期、餐品和金额，请按自己的分享范围使用。演示卡片明确标注合成数据。任何规则执行失败都会产生 `ENGINE-*` 事件，并以退出码 2 标记不完整审计，即使等级过滤隐藏了该事件也不会静默成功。
 
-## 开发与验证
+## 测试
 
 ```bash
 python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-Windows 免安装 exe 用 PyInstaller 打包：`build_exe.bat`（或见脚本内的 PyInstaller 命令）。注意必须带 `--collect-submodules mcd_postmortem`——规则引擎用 `pkgutil.iter_modules` 动态发现规则模块，静态分析收不齐，漏了会静默少报事件。
-
 回归测试覆盖连续段/非连续反例、订单去重、套餐数量口径、父子项去重、缺失与零值、状态过滤、跨进程复现、JSON 输出、缓存、客户端只读限制与 PNG 生成。测试只使用合成数据与模拟客户端。
+
+## 维护
+
+Windows 免安装 exe 用 PyInstaller 打包：`build_exe.bat`（或见脚本内的 PyInstaller 命令）。注意必须带 `--collect-submodules mcd_postmortem`——规则引擎用 `pkgutil.iter_modules` 动态发现规则模块，静态分析收不齐，漏了会静默少报事件。
 
 目标用户：喜欢 OnCall / SRE 复盘梗的程序员、想用一张报告回顾点餐习惯的人。本项目聚焦历史审计，点餐工作流可参考 mcd-git、MealCI 等项目。
 
