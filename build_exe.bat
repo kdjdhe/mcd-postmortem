@@ -11,6 +11,8 @@ if not exist .build-venv (
 
 .build-venv\Scripts\python.exe -m PyInstaller --onefile --clean --noconfirm ^
     --collect-submodules mcd_postmortem ^
+    --exclude-module mcd_postmortem.gui ^
+    --exclude-module customtkinter ^
     --name mcd-postmortem ^
     --distpath dist-exe --workpath build\pyinstaller --specpath build ^
     exe_entry.py || exit /b 1
